@@ -74,14 +74,25 @@ aurora init --home ./lab-workspace
 aurora version --home ./lab-workspace
 ```
 
+Add scope targets to `config.json` (see the README for the shape) and check
+them without touching the network:
+
+```bash
+aurora scope check https://lab.test/app --home ./lab-workspace
+echo "exit=$?"   # 0 allowed, 6 refused
+```
+
 ## 4. Run the test suite
 
 ```bash
 python -m pytest
 ```
 
-Expected on this milestone: `130 passed`. Tests never contact the network and
-never touch your home directory — they use temporary paths.
+Expected on this milestone: `287 passed` (242 unit, 37 integration, 8
+cross-platform). Tests never contact the internet and never touch your home
+directory — they use temporary paths and loopback fixtures on ephemeral ports.
+One integration test (DNS rebinding) needs `127.0.0.2` and is skipped where that
+address cannot be bound.
 
 ## 5. Terminal notes
 

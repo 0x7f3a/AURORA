@@ -7,10 +7,12 @@ you own or are explicitly authorised to test. It separates *observations* from
 *verified findings*, records the evidence behind every claim, and reports what
 was actually executed, skipped, or not implemented.
 
-> AURORA is under active development. The current milestone delivers the
-> Python foundation: workspace layout, configuration, platform detection,
-> the SQLite schema, logging with credential redaction, and the CLI. Networking,
-> discovery, assessment modules and reporting are **not implemented yet**.
+> AURORA is under active development. Delivered so far: the Python foundation
+> (workspace, configuration, platform detection, SQLite schema, redacting
+> logging, CLI) and the bounded network layer (scope engine, address policy,
+> pinned HTTP transport with manual redirects, budgets, timeouts, cancellation).
+> Discovery, assessment modules, verification and reporting are **not
+> implemented yet**, and no native component exists.
 
 ## Status
 
@@ -23,8 +25,12 @@ was actually executed, skipped, or not implemented.
 | Logging with credential redaction | IMPLEMENTED AND TESTED |
 | SQLite schema (assessments, scope, assets, observations, findings, evidence, module runs, errors) | IMPLEMENTED AND TESTED |
 | Assessment repository | IMPLEMENTED AND TESTED (create/get/list/count) |
+| URL normalisation and scope policy | IMPLEMENTED AND TESTED |
+| Address policy (private networks opt-in, link-local always denied) | IMPLEMENTED AND TESTED |
+| Pinned HTTP transport, manual redirects, Host/SNI preservation | IMPLEMENTED AND TESTED on Linux against local fixtures |
+| Budgets: requests, wall clock, rate, concurrency, size, timeouts, cancellation | IMPLEMENTED AND TESTED |
+| `aurora scope check` | IMPLEMENTED AND TESTED |
 | Native C component | NOT IMPLEMENTED (Phase 5; responsibility defined in `docs/ARCHITECTURE.md`) |
-| Scope enforcement, HTTP transport, redirect policy | NOT IMPLEMENTED (Phase 4) |
 | Discovery, assessment modules, verification, reporting | NOT IMPLEMENTED (Phases 6–7) |
 
 The precise evidence behind this table is in
@@ -72,15 +78,34 @@ aurora version --home ./lab-workspace
 aurora                       show the banner and help
 aurora init [--force]        create the workspace (config + SQLite schema)
 aurora version               show build, platform, workspace and schema state
+aurora scope check URL       explain whether a URL is inside the configured scope
 ```
 
 Global options: `--home PATH`, `--config PATH`, `--no-color`, `--ascii`,
 `--log-level {DEBUG,INFO,WARNING,ERROR}`. They may appear before or after the
 subcommand.
 
-Planned commands (`scope add`, `discover`, `assess`, `findings`, `report`) are
-deliberately **not registered** until they work: invoking one is a usage error,
-not a stub.
+Planned commands (`discover`, `assess`, `findings`, `report`) are deliberately
+**not registered** until they work: invoking one is a usage error, not a stub.
+
+Scope lives in `config.json` and is evaluated on a normalised URL:
+
+```json
+{
+  "scope": {
+    "targets": [
+      {"scheme": "https", "host": "lab.test", "port": 443},
+      {"kind": "exclude", "host": "lab.test", "path_prefix": "/logout"},
+      {"scheme": "http", "host": "127.0.0.1", "port": 8080, "allow_private": true}
+    ]
+  }
+}
+```
+
+Exclusions always win, `port: 0` means any port, `*.example.test` matches
+subdomains but not the apex, and `allow_private` is required before a rule may
+reach loopback/RFC1918 addresses. `aurora scope check` performs no DNS lookup
+and makes no request.
 
 ### Exit codes
 
@@ -92,6 +117,7 @@ not a stub.
 | 3 | configuration error |
 | 4 | storage/database error |
 | 5 | platform error (unsupported or unusable environment) |
+| 6 | network error, scope refusal, or `scope check` denial |
 
 ## Testing
 
@@ -100,12 +126,16 @@ python -m pytest
 ```
 
 The suite covers unit behaviour, a subprocess-level CLI run under an ASCII-only
-console, and cross-platform layout rules exercised on any host. See
+console, cross-platform layout rules, and integration tests against local HTTP
+and HTTPS fixtures. Those fixtures record the peer address, `Host` header, TLS
+SNI and request counts server-side, which is how the connection-boundary claims
+are checked. See [`docs/NETWORK-BOUNDARY.md`](docs/NETWORK-BOUNDARY.md) and
 [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) for what is **not** verified.
 
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [Network boundary experiment](docs/NETWORK-BOUNDARY.md)
 - [Installation — Linux](docs/INSTALLATION-LINUX.md)
 - [Installation — Windows](docs/INSTALLATION-WINDOWS.md)
 - [Security policy](docs/SECURITY.md)

@@ -15,6 +15,7 @@ __all__ = [
     "ConfigError",
     "PlatformError",
     "StorageError",
+    "UrlError",
     "UsageError",
 ]
 
@@ -57,3 +58,13 @@ class PlatformError(AuroraError):
     """The current platform is unsupported for the requested operation."""
 
     exit_code = ExitCode.PLATFORM
+
+
+class UrlError(AuroraError, ValueError):
+    """A URL is malformed, unparseable, or uses a disallowed form.
+
+    Also a :class:`ValueError` so that Pydantic field validators report it as a
+    normal validation failure rather than letting it escape configuration load.
+    """
+
+    exit_code = ExitCode.NETWORK

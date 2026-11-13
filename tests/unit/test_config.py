@@ -11,6 +11,7 @@ import pytest
 from aurora.config.loader import default_config, load_config, write_config
 from aurora.config.models import AuroraConfig, NetworkLimits
 from aurora.errors import ConfigError
+from aurora.scope.models import ScopeRule, ScopeSettings
 
 
 def _write_json(path, payload):
@@ -131,3 +132,46 @@ def test_unknown_profile_is_rejected():
 def test_null_redirect_budget_is_allowed():
     config = AuroraConfig(network=NetworkLimits(max_redirects=0))
     assert config.network.max_redirects == 0
+
+
+def test_scope_defaults_to_authorising_nothing():
+    assert default_config().scope.targets == ()
+
+
+def test_scope_round_trips_through_disk(tmp_path):
+    scope = ScopeSettings(
+        targets=(
+            ScopeRule(scheme="https", host="lab.test", port=443),
+            ScopeRule(kind="exclude", host="lab.test", path_prefix="/admin"),
+        )
+    )
+    config = default_config().model_copy(update={"scope": scope})
+    target = write_config(config, tmp_path / "config.json")
+    assert load_config(target) == config
+    assert load_config(target).scope.targets[0].host == "lab.test"
+
+
+def test_milestone_one_configuration_still_loads(tmp_path):
+    # A config written before scope support must keep working unchanged.
+    payload = default_config().to_dict()
+    payload.pop("scope")
+    target = _write_json(tmp_path / "config.json", payload)
+    assert load_config(target).scope.targets == ()
+
+
+def test_invalid_scope_rule_is_reported_with_the_field(tmp_path):
+    payload = default_config().to_dict()
+    payload["scope"] = {"targets": [{"host": "lab test"}]}
+    target = _write_json(tmp_path / "config.json", payload)
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(target)
+    assert "host" in str(excinfo.value)
+
+
+def test_scope_rule_with_unknown_key_is_rejected(tmp_path):
+    payload = default_config().to_dict()
+    payload["scope"] = {"targets": [{"host": "lab.test", "allow_privat": True}]}
+    target = _write_json(tmp_path / "config.json", payload)
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(target)
+    assert "allow_privat" in str(excinfo.value)

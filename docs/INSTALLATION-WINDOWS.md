@@ -89,8 +89,11 @@ aurora version --home .\lab-workspace
 python -m pytest
 ```
 
-Tests use temporary directories and never touch the network. The
-`chmod`-based permission assertions are skipped on Windows by design.
+Tests use temporary directories and never touch the internet; network tests run
+against loopback fixtures on ephemeral ports. On Linux the suite reports `287
+passed`. On Windows, expect the `chmod`-based permission assertions and the
+DNS-rebinding test to be **skipped** (the latter needs `127.0.0.2`). A skip is
+not a pass: report the actual counts.
 
 ## 5. Console notes
 

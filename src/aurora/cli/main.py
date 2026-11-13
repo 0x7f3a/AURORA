@@ -19,13 +19,15 @@ from typing import Sequence
 from aurora import BUILD, DISPLAY_VERSION, OPERATOR, PROGRAM_NAME
 from aurora.cli.banner import BannerContext, render_banner
 from aurora.cli.console import CliConsole
-from aurora.config.loader import config_path, default_config, write_config
+from aurora.config.loader import config_path, default_config, load_config, write_config
 from aurora.errors import AuroraError, StorageError
 from aurora.exit_codes import ExitCode
 from aurora.observability.logging import LOG_LEVELS, configure_logging
 from aurora.paths import AppPaths
 from aurora.platform.detect import PlatformInfo
 from aurora.platform.terminal import TerminalInfo
+from aurora.scope.policy import ScopePolicy
+from aurora.scope.urls import normalize_url
 from aurora.storage.database import Database
 
 __all__ = ["build_parser", "entrypoint", "main"]
@@ -38,6 +40,8 @@ examples:
   aurora init                  create the workspace in the default location
   aurora init --home ./lab     create an isolated workspace for a local lab
   aurora version               show build, platform and workspace state
+  aurora scope check https://lab.test/admin
+                               explain whether a URL is inside the configured scope
 
 AURORA is for systems you own or are explicitly authorised to assess.
 """
@@ -78,6 +82,12 @@ def _add_common_flags(parser: argparse.ArgumentParser, *, suppressed: bool = Fal
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """The top-level argument parser (used by tests and help rendering)."""
+
+    return _build_parsers()[0]
+
+
+def _build_parsers() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
     parser = argparse.ArgumentParser(
         prog="aurora",
         description=f"{PROGRAM_NAME} - web application penetration testing framework",
@@ -107,7 +117,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="overwrite an existing configuration file with defaults",
     )
 
-    return parser
+    scope_parser = subparsers.add_parser(
+        "scope",
+        help="inspect the configured scope without making requests",
+        description=(
+            "Inspect the scope configured in config.json. Scope is evaluated on a "
+            "normalised URL; no DNS or network activity takes place."
+        ),
+    )
+    _add_common_flags(scope_parser, suppressed=True)
+    scope_actions = scope_parser.add_subparsers(dest="scope_command", metavar="<action>")
+
+    check_parser = scope_actions.add_parser(
+        "check",
+        help="evaluate a URL against the configured scope",
+        description=(
+            "Explain whether a URL is inside the configured scope. Exits 0 when the "
+            "URL is allowed and 6 when it is refused."
+        ),
+    )
+    _add_common_flags(check_parser, suppressed=True)
+    check_parser.add_argument("url", help="URL to evaluate (http or https)")
+
+    return parser, scope_parser
 
 
 def _banner(context_platform: PlatformInfo, terminal: TerminalInfo) -> str:
@@ -222,6 +254,43 @@ def _cmd_init(
     return int(ExitCode.OK)
 
 
+def _cmd_scope_check(
+    args: argparse.Namespace,
+    paths: AppPaths,
+    console: CliConsole,
+) -> int:
+    configuration = config_path(paths, getattr(args, "config", None))
+    config = load_config(configuration)
+    policy = ScopePolicy.from_settings(config.scope)
+
+    url = normalize_url(args.url)
+    decision = policy.evaluate(url)
+
+    console.out(f"url         {args.url}")
+    console.out(f"normalized  {url.to_url()}")
+    console.out(f"decision    {'ALLOW' if decision.allowed else 'DENY'}")
+    console.out(f"reason      {decision.reason}")
+    if decision.allowed:
+        console.out(
+            "private     "
+            + ("permitted for this target" if decision.allow_private else "not permitted")
+        )
+    console.out("note        address policy is evaluated per request, not here")
+    return int(ExitCode.OK) if decision.allowed else int(ExitCode.NETWORK)
+
+
+def _cmd_scope(
+    args: argparse.Namespace,
+    paths: AppPaths,
+    console: CliConsole,
+    scope_parser: argparse.ArgumentParser,
+) -> int:
+    if getattr(args, "scope_command", None) == "check":
+        return _cmd_scope_check(args, paths, console)
+    scope_parser.print_help()
+    return int(ExitCode.OK)
+
+
 def _cmd_default(parser: argparse.ArgumentParser, console: CliConsole, terminal: TerminalInfo) -> int:
     console.out(_banner(PlatformInfo.collect(), terminal))
     console.out("")
@@ -232,7 +301,7 @@ def _cmd_default(parser: argparse.ArgumentParser, console: CliConsole, terminal:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and return a process exit code."""
 
-    parser = build_parser()
+    parser, scope_parser = _build_parsers()
     args = parser.parse_args(argv)
 
     terminal = TerminalInfo.detect(
@@ -260,6 +329,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_version(args, paths, console)
         if args.command == "init":
             return _cmd_init(args, paths, console, terminal)
+        if args.command == "scope":
+            return _cmd_scope(args, paths, console, scope_parser)
         return _cmd_default(parser, console, terminal)
     except AuroraError as exc:
         console.err(f"error: {exc}")
