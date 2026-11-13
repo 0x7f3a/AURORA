@@ -1,0 +1,57 @@
+name: windows
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} on windows-latest
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Environment report
+        run: |
+          python --version
+          python -c "import sys, platform; print(sys.platform, platform.machine())"
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: CLI smoke test
+        shell: pwsh
+        env:
+          AURORA_HOME: ${{ runner.temp }}\aurora-ci
+          PYTHONIOENCODING: ascii
+          NO_COLOR: "1"
+        run: |
+          aurora init
+          if ($LASTEXITCODE -ne 0) { throw "init failed" }
+          $output = aurora version
+          if ($LASTEXITCODE -ne 0) { throw "version failed" }
+          $output | Select-String -Pattern "schema v1"
+          $ascii = aurora --ascii version
+          if ($ascii -match "[^\x00-\x7F]") { throw "non-ASCII output on ASCII console" }

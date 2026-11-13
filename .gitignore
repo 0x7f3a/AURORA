@@ -1,0 +1,43 @@
+# Python bytecode and packaging
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test and type tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Native build output (CMake, Make, MSVC)
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
+Release/
+Debug/
+x64/
+*.o
+*.obj
+*.so
+*.dll
+*.dylib
+*.pdb
+
+# Local AURORA workspaces created during manual testing
+/aurora-workspace/
+/lab/
+
+# Editor and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
