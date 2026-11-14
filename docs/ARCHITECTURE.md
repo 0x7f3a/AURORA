@@ -44,8 +44,8 @@ persistence, credential theft, evasion/stealth, exploitation automation, a GUI.
    │  observability / paths │  redacted logging, workspace layout
    └───────────┬────────────┘
                │
-   ┌───────────▼────────────┐        (planned, Phase 4)
-   │  scope  ──►  net       │  normalise → authorise → send → bound
+   ┌───────────▼────────────┐
+   │  scope  ──►  net       │  normalise → authorise → resolve once → pin → bound
    └───────────┬────────────┘
                │  responses
    ┌───────────▼────────────┐        (planned, Phase 6)
@@ -78,8 +78,8 @@ the reporting layer be exercised without a network.
 | `aurora.observability` | UTC logging with redaction on every handler; header/URL/text redaction helpers | Implemented |
 | `aurora.storage` | SQLite connections, pragmas, versioned migrations, assessment repository | Implemented (assessments only) |
 | `aurora.paths` | Cross-platform workspace resolution (`AURORA_HOME`, `%APPDATA%`, XDG) | Implemented |
-| `aurora.scope` | URL normalisation and authorisation decisions | Planned (Phase 4) |
-| `aurora.net` | HTTPX client, manual redirect chain, limits, cancellation | Planned (Phase 4) |
+| `aurora.scope` | URL canonicalisation, scope rules, include/exclude decisions | Implemented |
+| `aurora.net` | Address policy, resolver, pinning, budgets, redirect-enforcing HTTPX client | Implemented |
 | `aurora.native` | Safe loading and ABI validation of the C component | Planned (Phase 5) |
 | `aurora.discovery` | Bounded asset discovery and attack-surface inventory | Planned (Phase 6) |
 | `aurora.checks` | Individual checks that emit observations | Planned (Phase 6) |
@@ -103,9 +103,9 @@ Empty placeholder modules are deliberately absent.
 | **BeautifulSoup4 for HTML** | Tolerant parsing of real-world markup | Not used until discovery exists; no parser differential is claimed |
 | **`asyncio`** | Cancellation and bounded concurrency | Windows uses the proactor loop since 3.8; the transport must avoid selectors-only assumptions |
 
-`httpx` and `beautifulsoup4` are declared dependencies because they belong to
-the approved stack; they are not imported by the current milestone. Importing
-them anyway would be dead code.
+`httpx` is used by `aurora.net`. `beautifulsoup4` is still unused: it belongs to
+the approved stack but nothing parses HTML yet, and importing it early would be
+dead code.
 
 ---
 
@@ -161,50 +161,64 @@ reported as such rather than shipping C that exists only for appearance.
 
 ---
 
-## 6. Scope and network boundaries (planned, Phase 4)
+## 6. Scope and network boundaries (implemented)
 
 Scope is a first-class object, not a string check:
 
 ```text
-scope target := (kind: include|exclude, scheme, host, port, path_prefix)
+scope target := (kind: include|exclude, scheme, host, port, path_prefix, allow_private)
 ```
 
-Rules the transport must satisfy:
+The transport order is fixed and every step fails closed:
 
-1. **Normalise first.** Lower-case scheme/host, IDNA-encode the host, strip
-   default ports, resolve dot segments, reject credentials in URLs.
-2. **Authorise each hop.** Redirects are followed manually: receive, resolve the
-   `Location`, validate scheme/host/port/path against scope, apply connection
-   policy, then continue. Automatic redirect following is never enabled, because
-   it would let the server choose the next destination.
-3. **Validate the address actually used.** A hostname may resolve to addresses
-   outside the authorised lab range. Private ranges are **not** blocked globally
-   — explicitly authorised local labs need them — but an address outside the
-   declared allowlist must not be contacted.
-4. **Enforce limits.** Connect/read/total timeouts, `max_response_bytes`,
-   `max_header_bytes`, `max_redirects`, `requests_per_second`, `max_concurrency`,
-   and a hard request budget per run.
-5. **Cancel deterministically.** Cancellation must stop in-flight requests, not
-   merely stop reading from them.
+1. **Normalise.** Lower-case scheme/host, IDNA-encode the host, make the port
+   explicit, resolve dot segments, drop the fragment, refuse embedded
+   credentials, backslashes, control characters and ambiguous percent-encoding
+   (`%2e`, `%2f`, `%5c`, `%00`). Non-canonical numeric hosts (`127.1`,
+   `2130706433`, `0x7f.0.0.1`) are refused rather than guessed at.
+2. **Authorise the URL.** Exclusions are evaluated first and always win; then the
+   first matching include rule, whose `allow_private` flag is carried forward.
+3. **Resolve once.** The system resolver is asked once per hop (address literals
+   skip resolution entirely).
+4. **Authorise the address.** Link-local (including `169.254.169.254`),
+   multicast, unspecified, reserved and unparseable addresses are never
+   contacted. Loopback, RFC1918, ULA and `100.64.0.0/10` require the rule's
+   `allow_private`. IPv4-mapped IPv6 is classified by its embedded IPv4 address.
+5. **Pin.** The request is addressed to the validated literal; the logical
+   hostname is preserved for the `Host` header and TLS SNI.
+6. **Bound.** Budget reservation, concurrency slot, rate token, connect/read
+   timeouts, an overall timeout across the whole redirect chain, and a streamed
+   body cap.
+7. **Repeat per redirect hop.** `Location` is resolved against the logical URL
+   and the whole sequence runs again. Automatic redirect following is never
+   enabled, and redirects to credentials, non-HTTP schemes or out-of-scope
+   targets are refused with no request sent.
 
-### DNS pinning: an open, unproven item
+### Connection-boundary evidence
 
-Validating a DNS answer and then letting the transport resolve the name again
-leaves a time-of-check/time-of-use window. Correct pinning requires the
-connection to use the validated address while the original hostname is preserved
-for the `Host` header and TLS SNI. HTTPX/`httpcore` allows a custom network
-backend, but **AURORA has not yet proven that the pinned address is the address
-actually connected to.**
+DNS pinning is no longer a claim resting on mocks. The integration suite drives a
+recording local server and asserts, server-side, that the peer address was the
+validated one while `Host` and SNI carried the original name, that a resolver
+answer changing after validation cannot redirect the connection, and that
+certificate verification is still performed against the hostname.
 
-Until an integration test demonstrates that behaviour against a local fixture
-that changes its DNS answer mid-run, AURORA will:
+Full method, observations and remaining gaps: [`NETWORK-BOUNDARY.md`](NETWORK-BOUNDARY.md).
 
-- validate the resolved address set before connecting,
-- document the residual TOCTOU window as an unverified protection,
-- and disable any feature whose safety depends on pinning.
+Deliberate trade-off: keep-alive is disabled (`max_keepalive_connections=0`), so
+one connection is opened per hop. A pooled connection could otherwise outlive a
+scope or DNS decision. At the default 4 requests/second the handshake cost is
+acceptable; it is revisited only if measurements justify it.
 
-No documentation or report will claim rebinding protection before that test
-exists.
+### Known gaps in this layer
+
+- Only `GET` and `HEAD` are implemented; no request bodies, cookies or
+  authentication flows yet.
+- Only the first authorised address is used; there is no retry against another
+  validated address.
+- `max_header_bytes` is enforced after parsing (it bounds what AURORA accepts,
+  not the library parser's memory).
+- HTTP/2 and proxies are disabled; IPv6 was unit-tested but not exercised over a
+  socket.
 
 ---
 
@@ -277,7 +291,7 @@ tested on any host; the Windows CI job is what proves the host behaviour.
 |---|---|
 | Unit | Validation, path rules, terminal detection, banner variants, redaction, migrations, constraints |
 | Integration (subprocess) | `python -m aurora` under an ASCII-only stdout encoding; init → version workflow; no traceback escapes |
-| Local HTTP fixtures (Phase 4) | Redirect chains, scope rejection, size/timeout enforcement, cancellation |
+| Local HTTP/HTTPS fixtures | Redirect chains, scope rejection, Host/SNI preservation, pinning under a rebinding answer, size/timeout/budget/rate/concurrency enforcement, cancellation |
 | Native parity (Phase 5) | C and Python parsers agree on a shared malformed-input corpus |
 | CI matrix | Ubuntu and Windows execute the same commands |
 

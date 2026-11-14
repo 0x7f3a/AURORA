@@ -28,8 +28,9 @@ By design and by policy, AURORA 0.1 does not implement:
 - unbounded crawling or unbounded request generation.
 
 Requests are rate-limited, size-capped, time-bounded, and cancellable by
-default. A check that cannot run inside those limits is skipped and reported as
-skipped, not run unbounded.
+default. Budgets are enforced before a connection is opened and count every
+redirect hop. A check that cannot run inside those limits is skipped and
+reported as skipped, not run unbounded.
 
 ## 3. Scope model
 
@@ -37,15 +38,23 @@ Private and loopback addresses are **not** blocked unconditionally: an
 authorised local lab is a legitimate target. Instead the policy distinguishes:
 
 - explicitly allowed hosts, ports and path prefixes (the scope),
-- explicitly excluded entries,
+- explicitly excluded entries, which always win,
+- loopback/RFC1918/ULA/shared addresses, reachable only when the matching rule
+  sets `allow_private`,
+- link-local (including cloud metadata), multicast, unspecified and reserved
+  addresses, which are **never** contacted,
 - everything else — not authorised, therefore not contacted.
 
-Every redirect hop is validated independently against the same policy. A server
-must not be able to redirect the assessment out of scope.
+URLs are canonicalised before any decision: credentials, backslashes, control
+characters, ambiguous percent-encoding and non-canonical numeric hosts are
+refused rather than interpreted. Every redirect hop is validated independently
+against the same policy, so a server cannot redirect the assessment out of
+scope, to a credential-bearing URL, or to another scheme.
 
-DNS-rebinding protection (IP pinning) is **not implemented and not claimed**.
-See `ARCHITECTURE.md` §6 for the design gate that must be passed before any such
-claim is made.
+DNS-rebinding protection is **implemented and measured on Linux**: one lookup,
+address validation, then connection to the validated literal with the original
+hostname preserved for `Host` and TLS SNI. The evidence and its remaining gaps
+(Windows, IPv6, HTTP/2) are recorded in `NETWORK-BOUNDARY.md`.
 
 ## 4. Data handling
 
@@ -66,8 +75,9 @@ credentials into a workspace you intend to share.
 Untrusted inputs AURORA must handle safely as it grows:
 
 1. **Target responses** — malformed headers, huge bodies, endless streams,
-   redirect loops, invalid TLS. Treated as hostile bytes; parsed with size caps
-   and timeouts, never `eval`'d or deserialised into objects.
+   redirect loops, invalid TLS. Treated as hostile bytes: bodies are streamed
+   with a hard cap, headers are capped, redirect chains are bounded and
+   re-authorised per hop, and nothing is `eval`'d or deserialised into objects.
 2. **Target HTML** — parsed for links and text only. No script execution, no
    automatic rendering.
 3. **Local files** — configuration is validated by schema; JSON parsing is

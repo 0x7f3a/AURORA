@@ -22,3 +22,4 @@ class ExitCode(IntEnum):
     CONFIG = 3
     STORAGE = 4
     PLATFORM = 5
+    NETWORK = 6

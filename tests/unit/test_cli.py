@@ -8,9 +8,21 @@ import pytest
 
 from aurora import DISPLAY_VERSION
 from aurora.cli.main import main
-from aurora.config.loader import default_config, load_config
+from aurora.config.loader import default_config, load_config, write_config
+from aurora.scope.models import ScopeSettings
 from aurora.storage.database import Database
 from aurora.storage.schema import SCHEMA_VERSION
+
+
+def _workspace_with_scope(tmp_path, targets):
+    workspace = tmp_path / "ws"
+    assert main(["init", "--home", str(workspace)]) == 0
+    config_file = workspace / "config.json"
+    config = load_config(config_file).model_copy(
+        update={"scope": ScopeSettings.model_validate({"targets": targets})}
+    )
+    write_config(config, config_file)
+    return workspace
 
 
 def test_bare_invocation_shows_banner_and_help(tmp_path, capsys):
@@ -23,7 +35,7 @@ def test_bare_invocation_shows_banner_and_help(tmp_path, capsys):
     assert "init" in output
 
 
-@pytest.mark.parametrize("command", ["discover", "assess", "findings", "report", "scope"])
+@pytest.mark.parametrize("command", ["discover", "assess", "findings", "report"])
 def test_planned_commands_are_not_registered(tmp_path, command):
     # Planned features must fail as usage errors rather than pretend to run.
     with pytest.raises(SystemExit) as excinfo:
@@ -147,6 +159,52 @@ def test_corrupt_database_is_reported_without_traceback(tmp_path, capsys):
     assert exit_code == 0
     assert "Traceback" not in captured.err
     assert "unreadable" in captured.out
+
+
+def test_scope_check_allows_an_in_scope_url(tmp_path, capsys):
+    workspace = _workspace_with_scope(
+        tmp_path, [{"scheme": "https", "host": "lab.test", "port": 443}]
+    )
+    capsys.readouterr()
+
+    assert main(["scope", "check", "https://lab.test/admin", "--home", str(workspace)]) == 0
+    output = capsys.readouterr().out
+    assert "decision    ALLOW" in output
+    assert "matches include rule" in output
+    assert "https://lab.test/admin" in output
+
+
+def test_scope_check_denies_an_out_of_scope_url(tmp_path, capsys):
+    workspace = _workspace_with_scope(
+        tmp_path, [{"scheme": "https", "host": "lab.test", "port": 443}]
+    )
+    capsys.readouterr()
+
+    assert main(["scope", "check", "https://other.test/", "--home", str(workspace)]) == 6
+    assert "decision    DENY" in capsys.readouterr().out
+
+
+def test_scope_check_reports_a_malformed_url(tmp_path, capsys):
+    workspace = _workspace_with_scope(tmp_path, [{"host": "lab.test"}])
+    capsys.readouterr()
+
+    assert main(["scope", "check", "ftp://lab.test/", "--home", str(workspace)]) == 6
+    assert "error:" in capsys.readouterr().err
+
+
+def test_scope_check_requires_a_workspace(tmp_path, capsys):
+    exit_code = main(
+        ["scope", "check", "https://lab.test/", "--home", str(tmp_path / "missing")]
+    )
+    assert exit_code == 3
+    assert "aurora init" in capsys.readouterr().err
+
+
+def test_scope_without_action_prints_help(tmp_path, capsys):
+    assert main(["scope", "--home", str(tmp_path)]) == 0
+    output = capsys.readouterr().out
+    assert "check" in output
+    assert "no DNS or network activity" in output
 
 
 def test_empty_home_flag_is_rejected(capsys):

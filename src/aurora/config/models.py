@@ -16,6 +16,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aurora import DISPLAY_VERSION, OPERATOR
+from aurora.scope.models import ScopeSettings
 
 __all__ = ["AuroraConfig", "NetworkLimits", "RunLimits"]
 
@@ -74,6 +75,7 @@ class AuroraConfig(BaseModel):
     )
     network: NetworkLimits = Field(default_factory=NetworkLimits)
     run: RunLimits = Field(default_factory=RunLimits)
+    scope: ScopeSettings = Field(default_factory=ScopeSettings)
 
     @field_validator("operator")
     @classmethod
