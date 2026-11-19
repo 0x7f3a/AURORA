@@ -76,6 +76,12 @@ def test_empty_override_is_rejected():
         AppPaths.resolve(environ={}, system="Linux", home_override="  ")
 
 
+def test_blank_string_override_is_rejected_rather_than_meaning_the_cwd():
+    # Path("") is "."; accepting it would silently use the current directory.
+    with pytest.raises(PlatformError):
+        AppPaths.resolve(environ={}, system="Linux", home_override="")
+
+
 def test_derived_artefacts_are_stable(tmp_path):
     paths = AppPaths.resolve(environ={}, system="Linux", home_override=tmp_path)
     assert paths.config_file == tmp_path / "config.json"

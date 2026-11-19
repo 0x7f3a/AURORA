@@ -151,6 +151,16 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, b"ok", extra=extra)
         elif route == "/status":
             self._send(int(query.get("code", ["200"])[0]), b"", send_body=False)
+        elif route == "/dup-headers":
+            self._send(
+                200,
+                b"ok",
+                extra=(("Set-Cookie", "a=1; Path=/"), ("Set-Cookie", "b=2; Path=/")),
+            )
+        elif route == "/truncated-body":
+            self._truncated_body(body_allowed)
+        elif route == "/stall-body":
+            self._stall_body(float(query.get("delay", ["0.5"])[0]), body_allowed)
         else:
             self._send(404, b"not found")
 
@@ -171,6 +181,28 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if send_body and self.command != "HEAD" and body:
             self.wfile.write(body)
+
+    def _truncated_body(self, body_allowed: bool) -> None:
+        """Promise a long body, send a short one, then drop the connection."""
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", "100")
+        self.end_headers()
+        if self.command != "HEAD" and body_allowed:
+            self.wfile.write(b"short")
+        self.close_connection = True
+
+    def _stall_body(self, delay: float, body_allowed: bool) -> None:
+        """Send the headers, then stall before any body byte arrives."""
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", "100")
+        self.end_headers()
+        if self.command != "HEAD" and body_allowed:
+            time.sleep(delay)
+            self.wfile.write(b"x" * 100)
 
     def _stream_bytes(self, size: int, body_allowed: bool) -> None:
         self.send_response(200)

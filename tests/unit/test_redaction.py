@@ -7,6 +7,7 @@ import logging
 
 from aurora.observability.redaction import (
     REDACTED,
+    SENSITIVE_HEADERS,
     RedactionFilter,
     redact_headers,
     redact_text,
@@ -61,6 +62,12 @@ def test_header_lines_in_text_are_redacted():
     redacted = redact_text(message)
     assert "abcdefghijklmnop" not in redacted
     assert "Host: lab.test" in redacted
+
+
+def test_every_sensitive_header_is_redacted_in_free_text():
+    for name in sorted(SENSITIVE_HEADERS):
+        redacted = redact_text(f"{name}: SECRETVALUE123456")
+        assert "SECRETVALUE123456" not in redacted, name
 
 
 def test_bare_auth_scheme_in_text_is_redacted():

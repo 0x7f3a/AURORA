@@ -13,6 +13,7 @@ from aurora.net.errors import (
     HeaderLimitExceeded,
     RequestTimedOut,
     ResponseTooLarge,
+    TransportError,
 )
 from fixtures.resolver import make_client, policy_for
 
@@ -153,6 +154,37 @@ def test_rate_limit_paces_sequential_requests(server):
     elapsed = _run(scenario())
     assert elapsed >= 0.4
     assert len(server.state.requests) == 3
+
+
+def test_repeated_headers_are_preserved_individually(server):
+    client = make_client(policy_for(server))
+    result = _run(client.fetch(server.url("/dup-headers")))
+
+    cookies = [value for name, value in result.raw_headers if name.lower() == "set-cookie"]
+    assert cookies == ["a=1; Path=/", "b=2; Path=/"]
+
+
+def test_truncated_body_is_a_transport_error(server):
+    client = make_client(policy_for(server))
+
+    with pytest.raises(TransportError) as excinfo:
+        _run(client.fetch(server.url("/truncated-body")))
+
+    assert "reading the body" in str(excinfo.value)
+
+
+def test_read_timeout_while_streaming_the_body_is_a_timeout(server):
+    client = make_client(
+        policy_for(server),
+        network=_network(
+            connect_timeout_seconds=0.2,
+            read_timeout_seconds=0.3,
+            total_timeout_seconds=5.0,
+        ),
+    )
+
+    with pytest.raises(RequestTimedOut):
+        _run(client.fetch(server.url("/stall-body?delay=1.5")))
 
 
 def test_status_codes_are_returned_without_body_caps_interfering(server):

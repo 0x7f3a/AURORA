@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from aurora.errors import UrlError
+from aurora.scope.models import ScopeRule, host_matches
+from aurora.scope.policy import ScopePolicy
 from aurora.scope.urls import normalize_host, normalize_path_prefix, normalize_url, path_prefix_matches
 
 
@@ -41,6 +43,46 @@ def test_empty_path_becomes_root():
 def test_dot_segments_are_resolved():
     url = normalize_url("https://lab.test/admin/../public/./index.html")
     assert url.path == "/public/index.html"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("http://lab.test//a/..", "//"),
+        ("http://lab.test/a//.", "/a//"),
+        ("http://lab.test/../a", "/a"),
+        ("http://lab.test/a/../../b", "/b"),
+    ],
+)
+def test_dot_segment_removal_keeps_empty_segments_as_rfc_3986_says(raw, expected):
+    assert normalize_url(raw).path == expected
+
+
+def test_encoded_unreserved_characters_are_decoded():
+    assert normalize_url("http://lab.test/%61dmin").path == "/admin"
+    assert normalize_url("http://lab.test/~%75ser").path == "/~user"
+
+
+def test_encoded_unreserved_prefix_matches_the_decoded_form():
+    assert normalize_path_prefix("/%61dmin") == "/admin"
+
+
+def test_exclusion_cannot_be_evaded_with_encoded_unreserved_characters():
+    policy = ScopePolicy(
+        [
+            ScopeRule(scheme="http", host="lab.test", allow_private=True),
+            ScopeRule(kind="exclude", scheme="http", host="lab.test", path_prefix="/admin"),
+        ]
+    )
+    assert policy.evaluate(normalize_url("http://lab.test/public")).allowed
+    assert not policy.evaluate(normalize_url("http://lab.test/%61dmin/users")).allowed
+
+
+def test_host_matching_is_case_and_trailing_dot_insensitive():
+    assert host_matches("LAB.test.", "lab.test")
+    assert host_matches("*.LAB.test", "api.lab.test")
+    assert not host_matches("*.lab.test", "lab.test")
+    assert not host_matches("*.lab.test", "badexa.test")
 
 
 def test_encoded_dot_segment_is_refused():

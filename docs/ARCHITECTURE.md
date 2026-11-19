@@ -172,9 +172,11 @@ scope target := (kind: include|exclude, scheme, host, port, path_prefix, allow_p
 The transport order is fixed and every step fails closed:
 
 1. **Normalise.** Lower-case scheme/host, IDNA-encode the host, make the port
-   explicit, resolve dot segments, drop the fragment, refuse embedded
-   credentials, backslashes, control characters and ambiguous percent-encoding
-   (`%2e`, `%2f`, `%5c`, `%00`). Non-canonical numeric hosts (`127.1`,
+   explicit, resolve dot segments (RFC 3986 §5.2.4 exactly, empty segments
+   included), decode percent-escapes for unreserved characters (§6.2.2.2) so
+   `/%61dmin` and `/admin` cannot be distinguished, drop the fragment, refuse
+   embedded credentials, backslashes, control characters and ambiguous
+   percent-encoding (`%2e`, `%2f`, `%5c`, `%00`). Non-canonical numeric hosts (`127.1`,
    `2130706433`, `0x7f.0.0.1`) are refused rather than guessed at.
 2. **Authorise the URL.** Exclusions are evaluated first and always win; then the
    first matching include rule, whose `allow_private` flag is carried forward.
