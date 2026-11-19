@@ -4,7 +4,7 @@ This file states what has been verified, what has not, and what does not exist.
 It is updated at every milestone; if a claim cannot be backed by a command that
 was executed, it does not belong in the README.
 
-Last updated: milestone 2, Phase 4 (`0.1.0-dev`).
+Last updated: Phase 4 plus URL targets and Windows CI (`0.1.0-dev`).
 
 ---
 
@@ -12,17 +12,20 @@ Last updated: milestone 2, Phase 4 (`0.1.0-dev`).
 
 | Claim | Status |
 |---|---|
-| Linux (Ubuntu 24.04.5 LTS, x86_64, Python 3.12.3): install, CLI, 287 tests, HTTP/HTTPS fixtures | **TESTED** |
-| Windows 10/11: install, CLI, tests | **NOT EXECUTED** |
-| Windows CI workflow exists and is valid YAML | **IMPLEMENTED — NOT EXECUTED** (no GitHub runner was available) |
-| Windows path logic (`%APPDATA%`, `aurora.dll`) | **TESTED as pure logic** on Linux; not executed on a Windows host |
+| Linux (Ubuntu 24.04.5 LTS, x86_64, Python 3.12.3): install, CLI, 336 tests, HTTP/HTTPS fixtures | **TESTED** |
+| Windows (`windows-latest`, Python 3.11 and 3.12): install, 336 tests, CLI smoke test | **TESTED in CI** (run on PR #3) |
+| Windows 10/11 physical desktop | **NOT EXECUTED** — CI covers `windows-latest` (Windows Server 2022); no desktop host has been used |
+| Windows path logic (`%APPDATA%`, `aurora.dll`) | **TESTED** on Linux as pure logic and on `windows-latest` as real paths |
 | DNS-rebinding experiment (`127.0.0.2` attacker server) | **TESTED on Linux**; the test **skips** on platforms that cannot bind a second loopback address |
 | IPv6 connection behaviour | **NOT EXECUTED** (URL construction unit-tested only) |
 | macOS support | **NOT SUPPORTED** |
 
-The development environment provided Linux only. No Windows execution has
-happened at any point, and the project does not claim Windows compatibility
-until the `windows.yml` job has actually run green on a Windows runner.
+Windows is executed by `windows.yml` on GitHub's `windows-latest` runner: both
+Python versions install the package, run the full suite and run the CLI smoke
+test. That is not the same as a physical Windows 10/11 desktop — console code
+pages, `%APPDATA%` on a real profile and local policy are exercised only to the
+extent the runner image reproduces them — so the desktop row above stays
+unexecuted.
 
 ---
 
@@ -67,7 +70,7 @@ until the `windows.yml` job has actually run green on a Windows runner.
 
 | Protection | Reality |
 |---|---|
-| DNS pinning / rebinding | **Implemented and tested on Linux.** The request connects to the validated literal; server-side tests confirm peer address, `Host`, SNI and that a changed resolver answer cannot redirect the connection. See `docs/NETWORK-BOUNDARY.md`. Not executed on Windows; IPv6 not exercised over a socket. |
+| DNS pinning / rebinding | **Implemented and tested on Linux and Windows CI.** The request connects to the validated literal; server-side tests confirm peer address, `Host`, SNI and that a changed resolver answer cannot redirect the connection. See `docs/NETWORK-BOUNDARY.md`. IPv6 is not exercised over a socket. |
 | Redirect scope bypass | Manual hop-by-hop processing; out-of-scope, credential-bearing and non-HTTP redirect targets are refused with no request sent (tested). |
 | Response-size limit | Streamed and enforced at `max_response_bytes` (tested at 1 KiB against a 20 KB response). |
 | Header-size limit | Enforced **after** HTTPX parses the header block; it bounds accepted responses, not library parser memory. |

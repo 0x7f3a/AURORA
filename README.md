@@ -18,18 +18,18 @@ was actually executed, skipped, or not implemented.
 
 | Area | State |
 |---|---|
-| Package layout, CLI entry point, banner | IMPLEMENTED AND TESTED (Linux) |
-| Platform detection (Linux/Windows/macOS rules, native library names) | IMPLEMENTED AND TESTED (logic), Windows host not executed |
-| Workspace paths, `$AURORA_HOME`, `%APPDATA%` | IMPLEMENTED AND TESTED (Linux), Windows host not executed |
+| Package layout, CLI entry point, banner | IMPLEMENTED AND TESTED (Linux, and Windows CI) |
+| Platform detection (Linux/Windows/macOS rules, native library names) | IMPLEMENTED AND TESTED (Linux, and Windows CI) |
+| Workspace paths, `$AURORA_HOME`, `%APPDATA%` | IMPLEMENTED AND TESTED (Linux, and Windows CI) |
 | Configuration model and validation | IMPLEMENTED AND TESTED |
 | Logging with credential redaction | IMPLEMENTED AND TESTED |
 | SQLite schema (assessments, scope, assets, observations, findings, evidence, module runs, errors) | IMPLEMENTED AND TESTED |
 | Assessment repository | IMPLEMENTED AND TESTED (create/get/list/count) |
 | URL normalisation and scope policy | IMPLEMENTED AND TESTED |
 | Address policy (private networks opt-in, link-local always denied) | IMPLEMENTED AND TESTED |
-| Pinned HTTP transport, manual redirects, Host/SNI preservation | IMPLEMENTED AND TESTED on Linux against local fixtures |
+| Pinned HTTP transport, manual redirects, Host/SNI preservation | IMPLEMENTED AND TESTED on Linux against local fixtures, and on Windows CI |
 | Budgets: requests, wall clock, rate, concurrency, size, timeouts, cancellation | IMPLEMENTED AND TESTED |
-| `aurora scope check`, `aurora scope add` | IMPLEMENTED AND TESTED (Linux) |
+| URL targets and `aurora scope check` / `aurora scope add` | IMPLEMENTED AND TESTED (Linux, and Windows CI) |
 | Native C component | NOT IMPLEMENTED (Phase 5; responsibility defined in `docs/ARCHITECTURE.md`) |
 | Discovery, assessment modules, verification, reporting | NOT IMPLEMENTED (Phases 6–7) |
 

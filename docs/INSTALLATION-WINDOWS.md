@@ -2,12 +2,14 @@
 
 Target platforms: Windows 10 x86_64 and Windows 11 x86_64, Python 3.11+.
 
-> **Verification status: NOT EXECUTED ON WINDOWS.**
-> The instructions below follow the code's design (pathlib paths, `%APPDATA%`
-> workspace, `aurora.dll` naming, ASCII console fallback) and the Windows CI
-> workflow in `.github/workflows/windows.yml`, but no Windows host was available
-> during development. Treat the first run on Windows as unverified until the CI
-> job and a manual run succeed.
+> **Verification status: EXECUTED IN CI, NOT ON A DESKTOP.**
+> The Windows workflow (`.github/workflows/windows.yml`) now passes on
+> `windows-latest` for Python 3.11 and 3.12: it installs the package, runs the
+> full test suite and runs the CLI smoke test (`aurora init`, `aurora version`,
+> ASCII console). Those steps are the same commands below, so the commands are
+> exercised. A physical Windows 10/11 desktop has still not been used, so
+> console code pages, a real `%APPDATA%` profile and local security policy are
+> only covered to the extent the runner image reproduces them.
 
 ---
 
