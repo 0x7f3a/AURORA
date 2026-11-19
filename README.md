@@ -29,7 +29,7 @@ was actually executed, skipped, or not implemented.
 | Address policy (private networks opt-in, link-local always denied) | IMPLEMENTED AND TESTED |
 | Pinned HTTP transport, manual redirects, Host/SNI preservation | IMPLEMENTED AND TESTED on Linux against local fixtures |
 | Budgets: requests, wall clock, rate, concurrency, size, timeouts, cancellation | IMPLEMENTED AND TESTED |
-| `aurora scope check` | IMPLEMENTED AND TESTED |
+| `aurora scope check`, `aurora scope add` | IMPLEMENTED AND TESTED (Linux) |
 | Native C component | NOT IMPLEMENTED (Phase 5; responsibility defined in `docs/ARCHITECTURE.md`) |
 | Discovery, assessment modules, verification, reporting | NOT IMPLEMENTED (Phases 6–7) |
 
@@ -79,6 +79,7 @@ aurora                       show the banner and help
 aurora init [--force]        create the workspace (config + SQLite schema)
 aurora version               show build, platform, workspace and schema state
 aurora scope check URL       explain whether a URL is inside the configured scope
+aurora scope add URL         add a URL target (scheme, host, port, path) to the scope
 ```
 
 Global options: `--home PATH`, `--config PATH`, `--no-color`, `--ascii`,
@@ -88,19 +89,39 @@ subcommand.
 Planned commands (`discover`, `assess`, `findings`, `report`) are deliberately
 **not registered** until they work: invoking one is a usage error, not a stub.
 
-Scope lives in `config.json` and is evaluated on a normalised URL:
+Scope lives in `config.json` and is evaluated on a normalised URL. A target is
+written as the URL of the application, so you enter an address rather than a
+bare host:
+
+```bash
+aurora scope add https://lab.test/app             # include this origin and /app
+aurora scope add '!https://lab.test/app/logout'   # '!' prefix marks an exclusion
+aurora scope add http://127.0.0.1:8080/ --allow-private
+```
+
+`scope add` parses the URL once and stores the explicit rule, so the config
+stays readable and diffable:
 
 ```json
 {
   "scope": {
     "targets": [
-      {"scheme": "https", "host": "lab.test", "port": 443},
-      {"kind": "exclude", "host": "lab.test", "path_prefix": "/logout"},
-      {"scheme": "http", "host": "127.0.0.1", "port": 8080, "allow_private": true}
+      "https://lab.test/app",
+      "!https://lab.test/app/logout",
+      {"url": "http://127.0.0.1:8080/", "allow_private": true},
+      {"scheme": "https", "host": "api.example.test", "port": 8443}
     ]
   }
 }
 ```
+
+All four forms are equivalent everywhere a target is accepted: a URL string
+(the scheme supplies the default port when none is written), a `!`-prefixed URL
+string for an exclusion, an object with `url`, or the explicit
+`scheme`/`host`/`port`/`path_prefix` object. A URL target keeps the path as a
+prefix, so `https://lab.test/app` covers `/app` and below but not `/other`.
+Query strings and fragments are refused rather than ignored, because scope has
+no query dimension.
 
 Exclusions always win, `port: 0` means any port, `*.example.test` matches
 subdomains but not the apex, and `allow_private` is required before a rule may

@@ -20,12 +20,13 @@ from aurora import BUILD, DISPLAY_VERSION, OPERATOR, PROGRAM_NAME
 from aurora.cli.banner import BannerContext, render_banner
 from aurora.cli.console import CliConsole
 from aurora.config.loader import config_path, default_config, load_config, write_config
-from aurora.errors import AuroraError, StorageError
+from aurora.errors import AuroraError, ConfigError, StorageError
 from aurora.exit_codes import ExitCode
 from aurora.observability.logging import LOG_LEVELS, configure_logging
 from aurora.paths import AppPaths
 from aurora.platform.detect import PlatformInfo
 from aurora.platform.terminal import TerminalInfo
+from aurora.scope.models import ScopeRule, ScopeSettings
 from aurora.scope.policy import ScopePolicy
 from aurora.scope.urls import normalize_url
 from aurora.storage.database import Database
@@ -42,6 +43,8 @@ examples:
   aurora version               show build, platform and workspace state
   aurora scope check https://lab.test/admin
                                explain whether a URL is inside the configured scope
+  aurora scope add https://lab.test/app
+                               add a URL target to the configured scope
 
 AURORA is for systems you own or are explicitly authorised to assess.
 """
@@ -121,8 +124,9 @@ def _build_parsers() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
         "scope",
         help="inspect the configured scope without making requests",
         description=(
-            "Inspect the scope configured in config.json. Scope is evaluated on a "
-            "normalised URL; no DNS or network activity takes place."
+            "Inspect or extend the scope configured in config.json. Scope is stored "
+            "as explicit scheme, host, port and path rules; 'add' parses a URL into "
+            "one. Checking is evaluated on a normalised URL and makes no request."
         ),
     )
     _add_common_flags(scope_parser, suppressed=True)
@@ -138,6 +142,29 @@ def _build_parsers() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
     )
     _add_common_flags(check_parser, suppressed=True)
     check_parser.add_argument("url", help="URL to evaluate (http or https)")
+
+    add_parser = scope_actions.add_parser(
+        "add",
+        help="add a URL target to the configured scope",
+        description=(
+            "Add a URL target to config.json. The URL supplies the scheme, host, port "
+            "and path prefix, so a target is written as the URL of the application "
+            "rather than as a bare host. Prefix the URL with '!' or pass --exclude to "
+            "record an exclusion instead."
+        ),
+    )
+    _add_common_flags(add_parser, suppressed=True)
+    add_parser.add_argument("url", help="target URL, e.g. https://lab.test/app")
+    add_parser.add_argument(
+        "--exclude",
+        action="store_true",
+        help="record the URL as an exclusion instead of an include",
+    )
+    add_parser.add_argument(
+        "--allow-private",
+        action="store_true",
+        help="permit loopback and private addresses for this target only",
+    )
 
     return parser, scope_parser
 
@@ -279,14 +306,55 @@ def _cmd_scope_check(
     return int(ExitCode.OK) if decision.allowed else int(ExitCode.NETWORK)
 
 
+def _cmd_scope_add(
+    args: argparse.Namespace,
+    paths: AppPaths,
+    console: CliConsole,
+) -> int:
+    configuration = config_path(paths, getattr(args, "config", None))
+    config = load_config(configuration)
+
+    kind = "exclude" if getattr(args, "exclude", False) else "include"
+    allow_private = bool(getattr(args, "allow_private", False))
+    if allow_private and kind == "exclude":
+        raise ConfigError("--allow-private only applies to include targets")
+
+    try:
+        rule = ScopeRule.from_url(args.url, kind=kind, allow_private=allow_private)
+    except ValueError as exc:  # includes UrlError
+        raise ConfigError(f"invalid target URL: {exc}") from exc
+
+    targets = list(config.scope.targets)
+    if rule in targets:
+        console.out(f"already     {rule.describe()}")
+    else:
+        targets.append(rule)
+        write_config(
+            config.model_copy(update={"scope": ScopeSettings(targets=tuple(targets))}),
+            configuration,
+        )
+        console.out(f"added       {rule.describe()}")
+
+    includes = sum(1 for target in targets if target.kind == "include")
+    console.out(f"targets     {len(targets)} ({includes} include, {len(targets) - includes} exclude)")
+    for target in targets:
+        console.out(f"  {target.describe()}")
+    console.out("")
+    console.out(f"config      {configuration}")
+    return int(ExitCode.OK)
+
+
 def _cmd_scope(
     args: argparse.Namespace,
     paths: AppPaths,
     console: CliConsole,
     scope_parser: argparse.ArgumentParser,
 ) -> int:
-    if getattr(args, "scope_command", None) == "check":
+    action = getattr(args, "scope_command", None)
+    if action == "check":
         return _cmd_scope_check(args, paths, console)
+    if action == "add":
+        return _cmd_scope_add(args, paths, console)
     scope_parser.print_help()
     return int(ExitCode.OK)
 
