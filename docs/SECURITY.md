@@ -47,7 +47,9 @@ authorised local lab is a legitimate target. Instead the policy distinguishes:
 
 URLs are canonicalised before any decision: credentials, backslashes, control
 characters, ambiguous percent-encoding and non-canonical numeric hosts are
-refused rather than interpreted. Every redirect hop is validated independently
+refused rather than interpreted, and percent-escapes for unreserved characters
+are decoded (RFC 3986 §6.2.2.2) so `/%61dmin` cannot slip past an `/admin`
+exclusion. Every redirect hop is validated independently
 against the same policy, so a server cannot redirect the assessment out of
 scope, to a credential-bearing URL, or to another scheme.
 

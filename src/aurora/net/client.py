@@ -31,7 +31,7 @@ from typing import Awaitable, Callable, Mapping
 import httpx
 
 from aurora.config.models import NetworkLimits, RunLimits
-from aurora.errors import UrlError, UsageError
+from aurora.errors import ConfigError, UrlError, UsageError
 from aurora.net.addresses import evaluate_address
 from aurora.net.budget import RateLimiter, RequestBudget
 from aurora.net.errors import (
@@ -52,6 +52,26 @@ __all__ = ["AuroraClient", "FetchResult"]
 
 _REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 _ALLOWED_METHODS = frozenset({"GET", "HEAD"})
+
+
+def _load_verify(verify: bool | str | ssl.SSLContext) -> bool | ssl.SSLContext:
+    """Resolve a CA bundle path to a context once, at construction time.
+
+    httpx deprecates passing a CA *path*, and building the context lazily meant
+    an unreadable bundle surfaced as a raw ``FileNotFoundError`` from the middle
+    of a request. Doing it here turns that into a configuration error before any
+    request is attempted.
+    """
+
+    if isinstance(verify, str):
+        try:
+            return ssl.create_default_context(cafile=verify)
+        except OSError as exc:
+            raise ConfigError(
+                f"cannot load CA bundle {verify}: {exc}",
+                hint="check the configured CA file path",
+            ) from exc
+    return verify
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +121,7 @@ class AuroraClient:
         self._limits = network_limits
         self._user_agent = user_agent
         self._resolver: Resolver = resolver if resolver is not None else SystemResolver()
-        self._verify = verify
+        self._verify = _load_verify(verify)
         self._clock = clock
         self._budget = RequestBudget(
             max_requests=run_limits.max_requests,
@@ -264,13 +284,32 @@ class AuroraClient:
 
                     try:
                         return await self._consume(url, response)
+                    except httpx.TimeoutException as exc:
+                        # The read timeout can fire while the body streams, after
+                        # the response line has already been parsed.
+                        raise RequestTimedOut(
+                            f"{method} {url.to_url()} timed out while reading the body "
+                            f"({type(exc).__name__})"
+                        ) from exc
+                    except httpx.HTTPError as exc:
+                        # A truncated or malformed body is a transport failure; it
+                        # must not escape as a raw httpx exception.
+                        raise TransportError(
+                            f"{method} {url.to_url()} failed while reading the body: "
+                            f"{type(exc).__name__}: {exc}"
+                        ) from exc
                     finally:
-                        await response.aclose()
+                        try:
+                            await response.aclose()
+                        except httpx.HTTPError:  # pragma: no cover - best effort
+                            pass
             finally:
                 await transport.aclose()
 
     async def _consume(self, url: NormalizedURL, response: httpx.Response) -> _Hop:
-        raw_headers = tuple((name, value) for name, value in response.headers.items())
+        # ``multi_items`` keeps repeated headers apart; ``items`` would join two
+        # ``Set-Cookie`` lines into one value and lose both cookies.
+        raw_headers = tuple(response.headers.multi_items())
         header_bytes = sum(
             len(name.encode("latin-1", "replace")) + len(value.encode("latin-1", "replace")) + 4
             for name, value in raw_headers
@@ -311,16 +350,9 @@ class AuroraClient:
             location=None,
         )
 
-    def _ssl_verify(self) -> bool | ssl.SSLContext:
-        # httpx deprecates a CA *path*; build the context here so callers can
-        # still configure a CA file (and so the deprecation never fires).
-        if isinstance(self._verify, str):
-            return ssl.create_default_context(cafile=self._verify)
-        return self._verify
-
     def _build_transport(self) -> httpx.AsyncHTTPTransport:
         return httpx.AsyncHTTPTransport(
-            verify=self._ssl_verify(),
+            verify=self._verify,
             trust_env=False,
             http1=True,
             http2=False,

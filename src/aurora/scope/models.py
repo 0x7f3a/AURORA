@@ -28,12 +28,19 @@ _HOST_MAX = 253
 
 
 def host_matches(pattern: str, host: str) -> bool:
-    """Whether *host* is covered by *pattern* (exact or ``*.`` subdomain)."""
+    """Whether *host* is covered by *pattern* (exact or ``*.`` subdomain).
 
-    if pattern.startswith("*."):
-        suffix = pattern[2:]
-        return host.endswith("." + suffix) and host != suffix
-    return pattern == host
+    Both sides are canonicalised here as well as by the models, so a caller
+    passing a rule host or a URL host straight from configuration still gets
+    case-insensitive, trailing-dot-insensitive DNS comparison.
+    """
+
+    pattern_host = pattern.strip().rstrip(".").lower()
+    candidate = host.strip().rstrip(".").lower()
+    if pattern_host.startswith("*."):
+        suffix = pattern_host[2:]
+        return candidate.endswith("." + suffix) and candidate != suffix
+    return pattern_host == candidate
 
 
 class ScopeRule(BaseModel):
@@ -82,7 +89,10 @@ class ScopeRule(BaseModel):
 
     def describe(self) -> str:
         port = "*" if self.port == 0 else str(self.port)
-        return f"{self.kind} {self.scheme}://{self.host}:{port}{self.path_prefix}"
+        # An IPv6 literal needs its brackets back, or the description reads as
+        # an unbracketed address followed by a port.
+        host = f"[{self.host}]" if ":" in self.host else self.host
+        return f"{self.kind} {self.scheme}://{host}:{port}{self.path_prefix}"
 
 
 class ScopeSettings(BaseModel):

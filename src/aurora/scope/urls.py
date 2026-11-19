@@ -10,6 +10,9 @@ reduced to a canonical form:
 * fragments dropped, query preserved verbatim;
 * ambiguous percent-encoding (encoded dot, slash, backslash or NUL) refused
   outright rather than guessed at;
+* percent-escapes that stand for unreserved characters are decoded (RFC 3986
+  section 6.2.2.2), so ``/admin`` and ``/%61dmin`` are the same path and cannot
+  be distinguished by a scope rule;
 * embedded credentials and backslashes refused: different HTTP stacks disagree
   about them, and a disagreement is exactly how scope checks get bypassed.
 
@@ -39,6 +42,10 @@ _FORBIDDEN_CHARACTERS = re.compile(r"[\x00-\x20\x7f]")
 _AMBIGUOUS_ENCODING = re.compile(r"(?i)%(2e|2f|5c|00)")
 _NUMERIC_HOST = re.compile(r"^[0-9.]+$")
 _HEX_LABEL = re.compile(r"(?i)^0x[0-9a-f]+$")
+_PERCENT_ESCAPE = re.compile(r"%([0-9A-Fa-f]{2})")
+_UNRESERVED = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+)
 
 
 def normalize_host(raw: str) -> str:
@@ -96,24 +103,62 @@ def normalize_host(raw: str) -> str:
 
 
 def _remove_dot_segments(path: str) -> str:
-    """RFC 3986 section 5.2.4, operating on a path with no query."""
+    """RFC 3986 section 5.2.4, operating on a path with no query.
 
-    output: list[str] = []
-    for segment in path.split("/"):
-        if segment == ".":
-            continue
-        if segment == "..":
-            if len(output) > 1:
-                output.pop()
-            continue
-        output.append(segment)
+    Implemented as the specification's state machine rather than as a
+    split/filter/join: the join loses empty segments in ways the algorithm does
+    not (``//a/..`` is ``//``, not ``/``), and a path that is normalised
+    differently from the one the server sees is exactly the disagreement scope
+    checking exists to prevent.
+    """
 
-    result = "/".join(output)
-    if not result.startswith("/"):
-        result = "/" + result
-    if path.endswith(("/.", "/..")) and not result.endswith("/"):
-        result += "/"
-    return result
+    remaining = path
+    output = ""
+    while remaining:
+        if remaining.startswith("../"):
+            remaining = remaining[3:]
+        elif remaining.startswith("./"):
+            remaining = remaining[2:]
+        elif remaining.startswith("/./"):
+            remaining = "/" + remaining[3:]
+        elif remaining == "/.":
+            remaining = "/"
+        elif remaining.startswith("/../"):
+            remaining = "/" + remaining[4:]
+            output = output[: output.rfind("/")] if "/" in output else ""
+        elif remaining == "/..":
+            remaining = "/"
+            output = output[: output.rfind("/")] if "/" in output else ""
+        elif remaining in (".", ".."):
+            remaining = ""
+        else:
+            start = 1 if remaining.startswith("/") else 0
+            segment_end = remaining.find("/", start)
+            if segment_end == -1:
+                output += remaining
+                remaining = ""
+            else:
+                output += remaining[:segment_end]
+                remaining = remaining[segment_end:]
+
+    return output if output.startswith("/") else "/" + output
+
+
+def _decode_unreserved(text: str) -> str:
+    """Decode percent-escapes that stand for unreserved characters.
+
+    RFC 3986 section 6.2.2.2 makes these equivalent to the literal character, so
+    ``/%61dmin`` and ``/admin`` address the same resource. Leaving them distinct
+    would let a percent-encoded path walk past an exclusion rule. Reserved
+    escapes (``%2f``, ``%3f``, ...) are left alone: the ambiguous ones are
+    refused outright before this runs.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        character = chr(int(match.group(1), 16))
+        return character if character in _UNRESERVED else match.group(0)
+
+    return _PERCENT_ESCAPE.sub(replace, text)
 
 
 def normalize_path_prefix(raw: str) -> str:
@@ -130,7 +175,7 @@ def normalize_path_prefix(raw: str) -> str:
         raise UrlError(f"path prefix {raw!r} contains a backslash")
     if not candidate.startswith("/"):
         raise UrlError(f"path prefix {raw!r} must start with '/'")
-    return _remove_dot_segments(candidate)
+    return _remove_dot_segments(_decode_unreserved(candidate))
 
 
 def path_prefix_matches(prefix: str, path: str) -> bool:
@@ -240,6 +285,6 @@ def normalize_url(raw: str, *, base: str | None = None) -> NormalizedURL:
         raise UrlError(
             "URL path contains ambiguous percent-encoding (encoded dot, slash or NUL)"
         )
-    path = _remove_dot_segments(path)
+    path = _remove_dot_segments(_decode_unreserved(path))
 
     return NormalizedURL(scheme=scheme, host=host, port=port, path=path, query=parts.query)

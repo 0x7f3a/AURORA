@@ -104,10 +104,12 @@ class AppPaths:
         target_system = system or _current_system()
 
         if home_override is not None:
-            raw = Path(os.fspath(home_override))
-            if not str(raw).strip():
+            # Check the string before Path() normalises it: Path("") is ".", so an
+            # empty flag value would otherwise silently mean the current directory.
+            override_text = os.fspath(home_override)
+            if not str(override_text).strip():
                 raise PlatformError("--home requires a non-empty path")
-            home = _absolute(raw)
+            home = _absolute(Path(override_text))
         elif env.get(ENV_HOME, "").strip():
             home = _absolute(Path(env[ENV_HOME].strip()))
         else:

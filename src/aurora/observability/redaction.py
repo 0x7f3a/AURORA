@@ -59,9 +59,12 @@ _SENSITIVE_QUERY_KEYS: frozenset[str] = frozenset(
     }
 )
 
+# Derived from SENSITIVE_HEADERS rather than restated, so a header that is
+# redacted in a structured mapping is redacted in a log line too.
 _HEADER_LINE = re.compile(
-    r"(?im)^([ \t]*(?:authorization|proxy-authorization|cookie|set-cookie|"
-    r"x-api-key|x-auth-token|x-csrf-token|api-key)[ \t]*:[ \t]*)[^\r\n]+"
+    r"(?im)^([ \t]*(?:"
+    + "|".join(re.escape(name) for name in sorted(SENSITIVE_HEADERS))
+    + r")[ \t]*:[ \t]*)[^\r\n]+"
 )
 
 _AUTH_SCHEME = re.compile(r"(?i)\b(Bearer|Basic|Token)[ \t]+[A-Za-z0-9\-._~+/]{8,}=*")
