@@ -12,11 +12,10 @@ import json
 import os
 from pathlib import Path
 
-from pydantic import ValidationError
-
 from aurora.config.models import AuroraConfig
 from aurora.errors import ConfigError
 from aurora.paths import AppPaths
+from aurora.validation import ValidationError
 
 __all__ = ["config_path", "default_config", "load_config", "write_config"]
 

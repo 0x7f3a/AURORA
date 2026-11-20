@@ -17,10 +17,9 @@ so a typo in a rule fails at load time with the field name in the message.
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Mapping
+from typing import Any, Literal
 from urllib.parse import urlsplit
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aurora.errors import UrlError
 from aurora.scope.urls import (
@@ -29,6 +28,7 @@ from aurora.scope.urls import (
     normalize_path_prefix,
     path_prefix_matches,
 )
+from aurora.validation import Field, Model, ValidationError
 
 __all__ = ["ScopeRule", "ScopeSettings", "host_matches"]
 
@@ -124,62 +124,66 @@ def _target_url_fields(raw: str) -> dict[str, object]:
     }
 
 
-class ScopeRule(BaseModel):
+def _clean_host(value: str) -> str:
+    candidate = value.strip().lower()
+    if not candidate:
+        raise ValueError("host must not be empty")
+    if candidate.startswith("*."):
+        suffix = candidate[2:]
+        if not suffix:
+            raise ValueError("wildcard host must include a domain, e.g. '*.example.test'")
+        return "*." + normalize_host(suffix)
+    if "*" in candidate:
+        raise ValueError("wildcards are only supported as a leading '*.'")
+    return normalize_host(candidate)
+
+
+class ScopeRule(Model):
     """One authorised (or explicitly excluded) target."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    _fields = {
+        "kind": Field("literal", choices=("include", "exclude"), default="include"),
+        "scheme": Field("literal", choices=("http", "https", "any"), default="any"),
+        "host": Field(
+            "str",
+            min_length=1,
+            max_length=_HOST_MAX,
+            coerce=_clean_host,
+        ),
+        "port": Field("int", default=0, ge=0, le=65535),
+        "path_prefix": Field("str", default="/", coerce=normalize_path_prefix),
+        "allow_private": Field("bool", default=False),
+    }
 
-    kind: Literal["include", "exclude"] = "include"
-    scheme: Literal["http", "https", "any"] = "any"
-    host: str = Field(min_length=1, max_length=_HOST_MAX)
-    port: int = Field(default=0, ge=0, le=65535, description="0 means any port")
-    path_prefix: str = "/"
-    allow_private: bool = Field(
-        default=False,
-        description="permit loopback/RFC1918/ULA addresses for this entry only",
-    )
-
-    @field_validator("host")
     @classmethod
-    def _clean_host(cls, value: str) -> str:
-        candidate = value.strip().lower()
-        if not candidate:
-            raise ValueError("host must not be empty")
-        if candidate.startswith("*."):
-            suffix = candidate[2:]
-            if not suffix:
-                raise ValueError("wildcard host must include a domain, e.g. '*.example.test'")
-            return "*." + normalize_host(suffix)
-        if "*" in candidate:
-            raise ValueError("wildcards are only supported as a leading '*.'")
-        return normalize_host(candidate)
-
-    @field_validator("path_prefix")
-    @classmethod
-    def _clean_path_prefix(cls, value: str) -> str:
-        return normalize_path_prefix(value)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _expand_url_target(cls, data: object) -> object:
+    def _before(cls, data: Any) -> Any:
         """Accept a URL string or a ``{"url": ...}`` object as a target."""
 
         if isinstance(data, str):
-            return cls.from_url(data).model_dump()
-        if isinstance(data, dict) and "url" in data:
+            return cls._expand(data)
+        if isinstance(data, Mapping) and "url" in data:
             if "host" in data:
-                raise ValueError("give either 'url' or 'host', not both")
+                raise ValidationError([((), "give either 'url' or 'host', not both")])
             extra = dict(data)
             raw_url = extra.pop("url")
             kind = extra.pop("kind", "include")
             allow_private = extra.pop("allow_private", False)
             if not isinstance(raw_url, str):
-                raise ValueError("'url' must be a string")
-            expanded = cls.from_url(raw_url, kind=kind, allow_private=allow_private).model_dump()
-            # Anything left over is unknown; extra="forbid" must still see it.
+                raise ValidationError([(("url",), "must be a string")])
+            expanded = cls._expand(raw_url, kind=kind, allow_private=allow_private)
+            # Anything left over is unknown; the field list must still reject it.
             expanded.update(extra)
             return expanded
         return data
+
+    @classmethod
+    def _expand(cls, raw: str, **options: Any) -> dict[str, Any]:
+        try:
+            return cls.from_url(raw, **options).model_dump()
+        except ValidationError:
+            raise
+        except ValueError as exc:
+            raise ValidationError([((), str(exc))]) from exc
 
     @classmethod
     def from_url(
@@ -199,7 +203,9 @@ class ScopeRule(BaseModel):
         if text.startswith("!"):
             kind = "exclude"
             text = text[1:].strip()
-        return cls(kind=kind, allow_private=allow_private, **_target_url_fields(text))
+        rule = cls(kind=kind, allow_private=allow_private, **_target_url_fields(text))
+        assert isinstance(rule, cls)
+        return rule
 
     def matches(self, url: NormalizedURL) -> bool:
         if self.scheme != "any" and self.scheme != url.scheme:
@@ -218,9 +224,13 @@ class ScopeRule(BaseModel):
         return f"{self.kind} {self.scheme}://{host}:{port}{self.path_prefix}"
 
 
-class ScopeSettings(BaseModel):
+class ScopeSettings(Model):
     """The ``scope`` section of the workspace configuration."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    targets: tuple[ScopeRule, ...] = ()
+    _fields = {
+        "targets": Field(
+            "tuple",
+            item=Field("model", model=ScopeRule),
+            default=(),
+        )
+    }
