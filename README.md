@@ -43,6 +43,25 @@ The precise evidence behind this table is in
 - No native toolchain is required yet; CMake and a C compiler become necessary
   only for the Phase 5 native component.
 
+## Run it without installing anything
+
+```bash
+python3 run.py init --home ./lab
+python3 run.py version --home ./lab
+python3 run.py scope add https://lab.test/app --home ./lab
+python3 run.py scope check https://lab.test/app/admin --home ./lab
+```
+
+`run.py` in the repository root puts `src/` on the import path and runs the
+CLI directly. Python 3.11+ is the only requirement: no virtual environment, no
+`pip install`, and no third-party package for any command that exists today.
+(`pytest` is needed only to run the test suite, and `httpx` only for the
+network layer the tests exercise.) On Windows the interpreter is usually named
+`python`, so use `python run.py version`.
+
+The rest of this section describes installing the package, which additionally
+gives you the `aurora` command.
+
 ## Quick start
 
 ```bash
