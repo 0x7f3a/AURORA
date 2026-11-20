@@ -204,7 +204,7 @@ def test_scope_without_action_prints_help(tmp_path, capsys):
     assert main(["scope", "--home", str(tmp_path)]) == 0
     output = capsys.readouterr().out
     assert "check" in output
-    assert "no DNS or network activity" in output
+    assert "add" in output
 
 
 def test_empty_home_flag_is_rejected(capsys):
@@ -212,3 +212,103 @@ def test_empty_home_flag_is_rejected(capsys):
     captured = capsys.readouterr()
     assert exit_code == 5  # PLATFORM exit code for an invalid workspace path
     assert "error:" in captured.err
+
+
+def test_scope_add_takes_a_url_and_enables_check(tmp_path, capsys):
+    workspace = tmp_path / "ws"
+    assert main(["init", "--home", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert main(["scope", "add", "https://lab.test/app", "--home", str(workspace)]) == 0
+    output = capsys.readouterr().out
+    assert "added" in output
+    assert "include https://lab.test:443/app" in output
+
+    targets = load_config(workspace / "config.json").scope.targets
+    assert [(r.scheme, r.host, r.port, r.path_prefix) for r in targets] == [
+        ("https", "lab.test", 443, "/app")
+    ]
+
+    assert main(["scope", "check", "https://lab.test/app/x", "--home", str(workspace)]) == 0
+    assert main(["scope", "check", "https://lab.test/other", "--home", str(workspace)]) == 6
+    assert main(["scope", "check", "https://lab.test:8443/app", "--home", str(workspace)]) == 6
+
+
+def test_scope_add_exclusion_and_idempotency(tmp_path, capsys):
+    workspace = tmp_path / "ws"
+    assert main(["init", "--home", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert main(["scope", "add", "https://lab.test/", "--home", str(workspace)]) == 0
+    assert (
+        main(["scope", "add", "!https://lab.test/logout", "--home", str(workspace)]) == 0
+    )
+    capsys.readouterr()
+
+    assert main(["scope", "add", "https://lab.test/", "--home", str(workspace)]) == 0
+    assert "already" in capsys.readouterr().out
+
+    targets = load_config(workspace / "config.json").scope.targets
+    assert [r.kind for r in targets] == ["include", "exclude"]
+
+    assert main(["scope", "check", "https://lab.test/logout", "--home", str(workspace)]) == 6
+    assert main(["scope", "check", "https://lab.test/app", "--home", str(workspace)]) == 0
+
+
+def test_scope_add_allow_private_flag(tmp_path, capsys):
+    workspace = tmp_path / "ws"
+    assert main(["init", "--home", str(workspace)]) == 0
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "scope",
+            "add",
+            "http://127.0.0.1:8080/",
+            "--allow-private",
+            "--home",
+            str(workspace),
+        ]
+    )
+    assert exit_code == 0
+    assert "added" in capsys.readouterr().out
+    assert load_config(workspace / "config.json").scope.targets[0].allow_private is True
+
+    assert main(["scope", "check", "http://127.0.0.1:8080/", "--home", str(workspace)]) == 0
+    assert "permitted for this target" in capsys.readouterr().out
+
+
+def test_scope_add_rejects_a_bare_host(tmp_path, capsys):
+    workspace = tmp_path / "ws"
+    assert main(["init", "--home", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert main(["scope", "add", "lab.test", "--home", str(workspace)]) == 3
+    assert "invalid target URL" in capsys.readouterr().err
+    assert load_config(workspace / "config.json").scope.targets == ()
+
+
+def test_scope_add_rejects_allow_private_on_an_exclusion(tmp_path, capsys):
+    workspace = tmp_path / "ws"
+    assert main(["init", "--home", str(workspace)]) == 0
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "scope",
+            "add",
+            "https://lab.test/",
+            "--exclude",
+            "--allow-private",
+            "--home",
+            str(workspace),
+        ]
+    )
+    assert exit_code == 3
+    assert "include targets" in capsys.readouterr().err
+
+
+def test_scope_add_requires_a_workspace(tmp_path, capsys):
+    exit_code = main(["scope", "add", "https://lab.test/", "--home", str(tmp_path / "none")])
+    assert exit_code == 3
+    assert "aurora init" in capsys.readouterr().err
